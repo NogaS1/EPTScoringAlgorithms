@@ -4,11 +4,9 @@
 \alias{calc_ept_score}
 \title{EPT's G score calculation}
 \usage{
-calc_ept_score(algoNum = 1, data)
+calc_ept_score(data, algoNum = 1)
 }
 \arguments{
-\item{algoNum}{The chosen algorithm, with default value of 1.}
-
 \item{data}{The processed data, with columns:
 sid (subjects' unique id), 
 error (1 is wrong, 0 is right), 
@@ -18,6 +16,8 @@ target_cat (pos / neg),
 block = part (EPT with 3 parts), 
 trial - trial number.
 The order should be: sid, error, rt, prime_cat, target_cat, block, trial, part.}
+
+\item{algoNum}{The chosen algorithm, with default value of 1.}
 }
 \value{
 Data frame of scores by subject (sid)
@@ -27,5 +27,5 @@ Calculate scores according to the users' choice of algorithm, with algorithm 1 a
 }
 \examples{
 scores1 <- calc_ept_score(myProcessedData);
-scores2 <- calc_ept_score(7, myProcessedData);
+scores2 <- calc_ept_score(myProcessedData, 7);
 }

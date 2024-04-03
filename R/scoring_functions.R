@@ -452,7 +452,7 @@ calc_algo_9 <- function(data, outcome){
 #' @return Data frame of scores by subject (sid)
 #' @examples 
 #' scores1 <- calc_ept_score(myProcessedData);
-#' scores2 <- calc_ept_score(7, myProcessedData);
+#' scores2 <- calc_ept_score(myProcessedData, 7);
 #' @export
 calc_ept_score <- function(data, algoNum = 1) {
   scores <- switch(as.character(algoNum),
