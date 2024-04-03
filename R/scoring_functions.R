@@ -455,6 +455,7 @@ calc_algo_9 <- function(data, outcome){
 #' scores2 <- calc_ept_score(myProcessedData, 7);
 #' @export
 calc_ept_score <- function(data, algoNum = 1) {
+  data <- data %>% dplyr::select(c("sid", "error", "rt", "prime_cat", "target_cat", "block", "trial", "part"))
   scores <- switch(as.character(algoNum),
                    "1" = calc_algo_1(data),
                    "2" = calc_algo_2(data),
