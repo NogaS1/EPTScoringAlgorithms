@@ -454,7 +454,7 @@ calc_algo_9 <- function(data, outcome){
 #' scores1 <- calc_ept_score(myProcessedData);
 #' scores2 <- calc_ept_score(7, myProcessedData);
 #' @export
-calc_ept_score <- function(algoNum = 1, data) {
+calc_ept_score <- function(data, algoNum = 1) {
   scores <- switch(as.character(algoNum),
                    "1" = calc_algo_1(data),
                    "2" = calc_algo_2(data),
