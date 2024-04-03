@@ -1,0 +1,5 @@
+Package: EPTScoringAlgorithms
+Type: Package
+Title: EPT's Algorithms Package for Calculating EPT Scores
+Version: 0.0.1.0
+RoxygenNote: 7.3.1
