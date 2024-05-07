@@ -2,7 +2,7 @@
 % Please edit documentation in R/scoring_functions.R
 \name{calc_ept_score}
 \alias{calc_ept_score}
-\title{EPT's G score calculation}
+\title{EPT's score calculation}
 \usage{
 calc_ept_score(data, blockNum = max(data$block), algoNum = 1)
 }
