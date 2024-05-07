@@ -1,4 +1,6 @@
-# EPTScoringAlgorithms R Package - EPT's score calculation
+# EPTScoringAlgorithms R Package
+
+## EPT's Score Calculation
 
 Calculate EPT scores using one of the 9 algorithms recommended in Segal-Gordon et al. (2024). Segal-Gordon et al. recommended Algorithms 1 and 7. Algorithm 1 is set as default.
 
