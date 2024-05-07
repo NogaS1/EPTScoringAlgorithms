@@ -3,17 +3,17 @@ library(abind)
 
 # Pre-processing ----------------------------------------------------------
 
-# Data's shape:
-# c("sid", "error", "rt", "prime_cat", "target_cat", "block", "trial", "part")
-#  sid - subjects' unique id
-# error - 1 is wrong, 0 is right
-# rt - reaction time
-# prime_cat - primes' categories
-# target_cat - pos / neg
-# block = part (need both)
-# trial - trial number
-
-
+# Check data's shape
+check_shape <- function(data, blockNum){
+  if(!"block" %in% colnames(data)){
+    data <- data %>%
+      dplyr::group_by(sid) %>%
+      dplyr::mutate(block = rep(1:blockNum, length.out = n()))
+  }
+  data <- data %>% dplyr::select(c("sid", "error", "rt", "prime_cat", "target_cat", "block"))
+  
+  return(data)
+}
 
 
 # General calculations for algorithms -------------------------------------
@@ -25,11 +25,12 @@ add_penalty <- function(correct, errors){
   mean_rt <- ep_mean_rt %>% dplyr::group_by(sid, block, .group = TRUE) %>% dplyr::mutate(mean_rt = mean(rt))
   mean_rt <- unique(mean_rt[,c(1,2,5)])
   errors_penalty <- merge(x=errors, y=mean_rt, by.x=c("sid", "block"), by.y = c("sid", "block"), all.x = TRUE)
-  errors_penalty <- errors_penalty %>% mutate(rt = mean_rt+600)
-  errors_penalty <- select(errors_penalty, -"mean_rt")
+  errors_penalty <- errors_penalty %>% dplyr::mutate(rt = mean_rt+600)
+  errors_penalty <- dplyr::select(errors_penalty, -"mean_rt")
   
-  correct <- select(correct, c("sid", "prime_cat", "target_cat", "error", "rt", "block", "trial", "part", "error_rate"))
+  correct <- dplyr::select(correct, c("sid", "prime_cat", "target_cat", "error", "rt", "block", "error_rate"))
   res <- rbind(correct, errors_penalty)          # Add error trials (after penalty) to correct trials trimmed df
+  
   return(res)
 }
 
@@ -49,24 +50,29 @@ remove_participants <- function(data){
   not_ok_sid <- append(missing$sid, not_ok_sid)
   data <- data[!data$sid %in% not_ok_sid,]
   
+  # missing blocks
+  max_block <- max(data$block)
+  all_parts <- list()
   
-  # check sid have all 3 parts
-  part_1 <- unique(data[data$part == 1, c("sid")])
-  part_2 <- unique(data[data$part == 2, c("sid")])
-  part_3 <- unique(data[data$part == 3, c("sid")])
+  # Iterate over each block to get unique sids
+  for (i in 1:max_block) {
+    all_parts[[i]] <- unique(data[data$block == i, "sid"])
+  }
   
-  missing_parts_12 <- part_1[!part_1 %in% part_2]
-  missing_parts_13 <- part_1[!part_1 %in% part_3]
-  missing_parts_21 <- part_2[!part_2 %in% part_1]
-  missing_parts_23 <- part_2[!part_2 %in% part_3]
-  missing_parts_31 <- part_3[!part_3 %in% part_1]
-  missing_parts_32 <- part_3[!part_3 %in% part_2]
-  missing_parts <- unique(abind(missing_parts_12, missing_parts_13, missing_parts_21, missing_parts_23, missing_parts_31, missing_parts_32))
-  data <- data[!data$sid %in% missing_parts,]
+  # Find missing parts
+  missing_parts <- vector("list", length = max_block)
+  for (i in 1:max_block) {
+    other_blocks <- setdiff(1:max_block, i)
+    missing_parts[[i]] <- lapply(other_blocks, function(j) all_parts[[j]][!all_parts[[j]] %in% all_parts[[i]]])
+  }
+  
+  all_missing_parts <- unique(unlist(unlist(missing_parts)))
+  
+  # Remove missing
+  data <- data[!data$sid %in% all_missing_parts, ]
   
   return(data)
 }
-
 
 # Calculate basic G score
 my.Gscores <- function(inID, inDV, inPair, inCond, include){
@@ -178,43 +184,56 @@ calc_g_overall <- function(data){
   Mranks <- reshape2::dcast(Mranks, sessionId + pair ~ cond, value.var = "Mean")
   
   # "5. G = G2-G1"
-  Mranks <- mutate(Mranks, Gscore = incong - cong)
-
+  Mranks <- Mranks %>% dplyr::mutate(Gscore = incong - cong)
+  
   # Put data in wide format
   overall <- reshape2::dcast(Mranks, sessionId ~ pair, value.var = "Gscore")
-
   
   # change col names
   colnames(overall)[1] <- "sid"
-  names(overall)[names(overall) != "sid"] <- paste0("g_overall_", names(overall)[names(overall) != "sid"])
+  names(overall)[names(overall) != "sid"] <- paste0("g_", names(overall)[names(overall) != "sid"])
   
   return(overall)
 }
 
-
 # Average 3 parts of G score
 calc_g_parts <- function(data){
+  max_block <- max(data$block)  # Get the maximum block number
   
-  # Calculate scores for each part
-  scores_1 <- calc_g_overall(data[data$part == 1,])
-  scores_2 <- calc_g_overall(data[data$part == 2,])
-  scores_3 <- calc_g_overall(data[data$part == 3,])
+  # Initialize an empty list to store scores for each block
+  score_list <- list()
   
-  # Average the scores
-  arr <- abind(scores_1, scores_2, scores_3, along = 3)
-  scores <- data.frame(rowMeans(arr, dims = 2))
-  names(scores) <- gsub(x = names(scores), pattern = "overall", replacement = "parts")
+  # Calculate scores for each block
+  for (i in 1:max_block) {
+    scores <- calc_g_overall(data[data$block == i, ])
+    score_list[[i]] <- scores
+  }
+  
+  # Calculate the row means across blocks
+  scores <- Reduce(`+`, score_list) / max_block
+  
+  # Initialize an empty data frame to store the blocks' scores
+  all_block_scores <- data.frame(sid = unique(data$sid))
+  
+  # Iterate over each block and merge scores by 'sid'
+  for (i in 1:max_block) {
+    block_scores <- score_list[[i]]
+    colnames(block_scores)[-1] <- paste0(names(block_scores)[-1], "_", i)  # Exclude the first column (sid)
+    all_block_scores <- merge(all_block_scores, block_scores, by = "sid", all.x = TRUE)
+  }
+  
+  # Merge all scores - final (average) and seperated by blocks
+  scores <- merge(scores, all_block_scores, by = "sid", all.x = TRUE)
+  
   
   return(scores)
 }
 
 
-
-
 # Algorithms' functions ----------------------------------------------------
 
 # Algo 1 - e0.5_lowNone_2SD_noWinsorize_600msPenaltyErrors_noLog_g_overall
-calc_algo_1 <- function(data, outcome){
+calc_algo_1 <- function(data){
   
   # add error rate to fit other functions
   data <- as.data.frame(data %>% dplyr::group_by(sid) %>% dplyr::mutate(error_rate = mean(error, na.rm = TRUE)))
@@ -224,24 +243,37 @@ calc_algo_1 <- function(data, outcome){
   errors <- subset(data, error == 1)
   
   # Outlier trial treatment - only for correct trials
-  correct <- select(subset(data, error == 0), c("sid", "prime_cat", "target_cat", "error", "rt", "block", "trial", "part", "error_rate"))
+  correct <- dplyr::select(subset(data, error == 0), c("sid", "prime_cat", "target_cat", "error", "rt", "block", "error_rate"))
   
   sd <- correct %>% dplyr::group_by(sid, prime_cat, target_cat, .group = TRUE) %>% dplyr::summarise(mean = mean(rt, na.rm = TRUE), sd = sd(rt, na.rm = TRUE))      # SD within participants, within each prime-target condition of that participant
   sd$high <- sd$mean + sd$sd*2
-  correct <- select(correct, c("sid", "prime_cat", "target_cat", "error", "rt", "block", "trial", "part", "error_rate"))
-  correct <- select(merge(x = correct, y = sd, by = c("sid", "prime_cat", "target_cat"), all.x = TRUE), -c(".group"))
+  correct <- dplyr::select(correct, c("sid", "prime_cat", "target_cat", "error", "rt", "block", "error_rate"))
+  correct <- dplyr::select(merge(x = correct, y = sd, by = c("sid", "prime_cat", "target_cat"), all.x = TRUE), -c(".group"))
   correct <- subset(correct, rt <= correct$high)
   
   final_data <- remove_participants(add_penalty(correct, errors))
   
   score <- calc_g_overall(final_data)
   
+  # Add the blocks' scores
+  max_block <- max(final_data$block)  # Get the maximum block number
+  # Initialize an empty data frame to store the blocks' scores
+  all_block_scores <- data.frame(sid = unique(final_data$sid))
+  
+  # Iterate over each block and merge scores by 'sid'
+  for (i in 1:max_block) {
+    block_scores <- calc_g_overall(data[final_data$block == i, ])
+    colnames(block_scores)[-1] <- paste0(names(block_scores)[-1], "_", i)  # Exclude the first column (sid)
+    all_block_scores <- merge(all_block_scores, block_scores, by = "sid", all.x = TRUE)
+  }
+  
+  score <- merge(score, all_block_scores, by = "sid", all.x = TRUE)
+  
   return(score)
 }
 
-
 # Algo 2 - e0.4_300_2SD_noWinsorize_600msPenaltyErrors_noLog_g_parts
-calc_algo_2 <- function(data, outcome){
+calc_algo_2 <- function(data){
   # add error rate to fit other functions
   data <- as.data.frame(data %>% dplyr::group_by(sid) %>% dplyr::mutate(error_rate = mean(error, na.rm = TRUE)))
   data <- subset(data, error_rate <= 0.4)
@@ -250,25 +282,24 @@ calc_algo_2 <- function(data, outcome){
   errors <- subset(data, error == 1)
   
   # Outlier trial treatment - only for correct trials
-  correct <- select(subset(data, error == 0), c("sid", "prime_cat", "target_cat", "error", "rt", "block", "trial", "part", "error_rate"))
+  correct <- select(subset(data, error == 0), c("sid", "prime_cat", "target_cat", "error", "rt", "block", "error_rate"))
   correct <- subset(correct, 300 <= rt)   # remove rt<300
   
   sd <- correct %>% dplyr::group_by(sid, prime_cat, target_cat, .group = TRUE) %>% dplyr::summarise(mean = mean(rt, na.rm = TRUE), sd = sd(rt, na.rm = TRUE))      # SD within participants, within each prime-target condition of that participant
   sd$high <- sd$mean + sd$sd*2
-  correct <- select(correct, c("sid", "prime_cat", "target_cat", "error", "rt", "block", "trial", "part", "error_rate"))
+  correct <- select(correct, c("sid", "prime_cat", "target_cat", "error", "rt", "block", "error_rate"))
   correct <- select(merge(x = correct, y = sd, by = c("sid", "prime_cat", "target_cat"), all.x = TRUE), -c(".group"))
   correct <- subset(correct, rt <= correct$high)
   
   final_data <- remove_participants(add_penalty(correct, errors))
   
   score <- calc_g_parts(final_data)
-
+  
   return(score)
 }
 
-
 # Algo 3 - e0.5_300_1000_winsorize_600msPenaltyErrors_noLog_g_parts
-calc_algo_3 <- function(data, outcome){
+calc_algo_3 <- function(data){
   # remove participant with error rate higher than 0.5
   data <- as.data.frame(data %>% dplyr::group_by(sid) %>% dplyr::mutate(error_rate = mean(error, na.rm = TRUE)))
   data <- subset(data, error_rate <= 0.5)
@@ -277,20 +308,19 @@ calc_algo_3 <- function(data, outcome){
   errors <- subset(data, error == 1)
   
   # Outlier trial treatment - only for correct trials
-  correct <- select(subset(data, error == 0), c("sid", "prime_cat", "target_cat", "error", "rt", "block", "trial", "part", "error_rate"))
+  correct <- select(subset(data, error == 0), c("sid", "prime_cat", "target_cat", "error", "rt", "block", "error_rate"))
   correct <- correct %>% mutate(rt = ifelse(1000 < rt, 1000, rt)) # 1000<rt >> change rt to 1000
   correct <- correct %>% mutate(rt = ifelse(rt < 300, 300, rt))   # rt<300 >> change rt to 300
   
   final_data <- remove_participants(add_penalty(correct, errors))
   
   score <- calc_g_parts(final_data)
-
+  
   return(score)
 }
-
 
 # Algo 4 - e0.4_lowNone_1000_winsorize_600msPenaltyErrors_noLog_g_parts
-calc_algo_4 <- function(data, outcome){
+calc_algo_4 <- function(data){
   
   # remove participant with error rate higher than 0.4
   data <- as.data.frame(data %>% dplyr::group_by(sid) %>% dplyr::mutate(error_rate = mean(error, na.rm = TRUE)))
@@ -300,19 +330,18 @@ calc_algo_4 <- function(data, outcome){
   errors <- subset(data, error == 1)
   
   # Outlier trial treatment - only for correct trials
-  correct <- select(subset(data, error == 0), c("sid", "prime_cat", "target_cat", "error", "rt", "block", "trial", "part", "error_rate"))
+  correct <- select(subset(data, error == 0), c("sid", "prime_cat", "target_cat", "error", "rt", "block", "error_rate"))
   correct <- correct %>% mutate(rt = ifelse(1000 < rt, 1000, rt)) # 1000<rt >> change rt to 1000
   
   final_data <- remove_participants(add_penalty(correct, errors))
   
   score <- calc_g_parts(final_data)
-
+  
   return(score)
 }
 
-
 # Algo 5 - e0.4_300_1000_winsorize_600msPenaltyErrors_noLog_g_parts
-calc_algo_5 <- function(data, outcome){
+calc_algo_5 <- function(data){
   
   # remove participant with error rate higher than 0.4
   data <- as.data.frame(data %>% dplyr::group_by(sid) %>% dplyr::mutate(error_rate = mean(error, na.rm = TRUE)))
@@ -322,20 +351,19 @@ calc_algo_5 <- function(data, outcome){
   errors <- subset(data, error == 1)
   
   # Outlier trial treatment - only for correct trials
-  correct <- select(subset(data, error == 0), c("sid", "prime_cat", "target_cat", "error", "rt", "block", "trial", "part", "error_rate"))
+  correct <- select(subset(data, error == 0), c("sid", "prime_cat", "target_cat", "error", "rt", "block", "error_rate"))
   correct <- correct %>% mutate(rt = ifelse(1000 < rt, 1000, rt)) # 1000<rt >> change rt to 1000
   correct <- correct %>% mutate(rt = ifelse(rt < 300, 300, rt))   # rt<300 >> change rt to 300
   
   final_data <- remove_participants(add_penalty(correct, errors))
   
   score <- calc_g_parts(final_data)
-
+  
   return(score)
 }
 
-
 # Algo 6 - e0.5_lowNone_2SD_noWinsorize_600msPenaltyErrors_noLog_g_parts
-calc_algo_6 <- function(data, outcome){
+calc_algo_6 <- function(data){
   
   # add error rate to fit other functions
   data <- as.data.frame(data %>% dplyr::group_by(sid) %>% dplyr::mutate(error_rate = mean(error, na.rm = TRUE)))
@@ -345,25 +373,24 @@ calc_algo_6 <- function(data, outcome){
   errors <- subset(data, error == 1)
   
   # Outlier trial treatment - only for correct trials
-  correct <- select(subset(data, error == 0), c("sid", "prime_cat", "target_cat", "error", "rt", "block", "trial", "part", "error_rate"))
+  correct <- select(subset(data, error == 0), c("sid", "prime_cat", "target_cat", "error", "rt", "block", "error_rate"))
   
   
   sd <- correct %>% dplyr::group_by(sid, prime_cat, target_cat, .group = TRUE) %>% dplyr::summarise(mean = mean(rt, na.rm = TRUE), sd = sd(rt, na.rm = TRUE))      # SD within participants, within each prime-target condition of that participant
   sd$high <- sd$mean + sd$sd*2
-  correct <- select(correct, c("sid", "prime_cat", "target_cat", "error", "rt", "block", "trial", "part", "error_rate"))
+  correct <- select(correct, c("sid", "prime_cat", "target_cat", "error", "rt", "block", "error_rate"))
   correct <- select(merge(x = correct, y = sd, by = c("sid", "prime_cat", "target_cat"), all.x = TRUE), -c(".group"))
   correct <- subset(correct, rt <= correct$high)
   
   final_data <- remove_participants(add_penalty(correct, errors))
   
   score <- calc_g_parts(final_data)
-
+  
   return(score)
 }
 
-
 # Algo 7 - e0.5_300_2SD_noWinsorize_600msPenaltyErrors_noLog_g_parts
-calc_algo_7 <- function(data, outcome){
+calc_algo_7 <- function(data){
   
   # add error rate to fit other functions
   data <- as.data.frame(data %>% dplyr::group_by(sid) %>% dplyr::mutate(error_rate = mean(error, na.rm = TRUE)))
@@ -373,25 +400,24 @@ calc_algo_7 <- function(data, outcome){
   errors <- subset(data, error == 1)
   
   # Outlier trial treatment - only for correct trials
-  correct <- select(subset(data, error == 0), c("sid", "prime_cat", "target_cat", "error", "rt", "block", "trial", "part", "error_rate"))
+  correct <- select(subset(data, error == 0), c("sid", "prime_cat", "target_cat", "error", "rt", "block", "error_rate"))
   correct <- subset(correct, 300 <= rt)   # remove rt<300
   
   sd <- correct %>% dplyr::group_by(sid, prime_cat, target_cat, .group = TRUE) %>% dplyr::summarise(mean = mean(rt, na.rm = TRUE), sd = sd(rt, na.rm = TRUE))      # SD within participants, within each prime-target condition of that participant
   sd$high <- sd$mean + sd$sd*2
-  correct <- select(correct, c("sid", "prime_cat", "target_cat", "error", "rt", "block", "trial", "part", "error_rate"))
+  correct <- select(correct, c("sid", "prime_cat", "target_cat", "error", "rt", "block", "error_rate"))
   correct <- select(merge(x = correct, y = sd, by = c("sid", "prime_cat", "target_cat"), all.x = TRUE), -c(".group"))
   correct <- subset(correct, rt <= correct$high)
   
   final_data <- remove_participants(add_penalty(correct, errors))
   
   score <- calc_g_parts(final_data)
-
+  
   return(score)
 }
 
-
 # Algo 8 - best treatments no winsorize - e0.4_lowNone_1000_noWinsorize_600msPenaltyErrors_noLog_g_parts
-calc_algo_8 <- function(data, outcome){
+calc_algo_8 <- function(data){
   # add error rate to fit other functions
   data <- as.data.frame(data %>% dplyr::group_by(sid) %>% dplyr::mutate(error_rate = mean(error, na.rm = TRUE)))
   data <- subset(data, error_rate <= 0.4)
@@ -400,20 +426,18 @@ calc_algo_8 <- function(data, outcome){
   errors <- subset(data, error == 1)
   
   # Outlier trial treatment - only for correct trials
-  correct <- select(subset(data, error == 0), c("sid", "prime_cat", "target_cat", "error", "rt", "block", "trial", "part", "error_rate"))
+  correct <- select(subset(data, error == 0), c("sid", "prime_cat", "target_cat", "error", "rt", "block", "error_rate"))
   correct <- subset(correct, rt <= 1000)
   
   final_data <- remove_participants(add_penalty(correct, errors))
   
   score <- calc_g_parts(final_data)
-
+  
   return(score)
 }
 
-
 # Algo 9 - best tratments with winsorize - e0.4_lowNone_1000_winsorize_600msPenaltyErrors_noLog_g_parts
-
-calc_algo_9 <- function(data, outcome){
+calc_algo_9 <- function(data){
   # add error rate to fit other functions
   data <- as.data.frame(data %>% dplyr::group_by(sid) %>% dplyr::mutate(error_rate = mean(error, na.rm = TRUE)))
   data <- subset(data, error_rate <= 0.4)
@@ -422,13 +446,13 @@ calc_algo_9 <- function(data, outcome){
   errors <- subset(data, error == 1)
   
   # Outlier trial treatment - only for correct trials
-  correct <- select(subset(data, error == 0), c("sid", "prime_cat", "target_cat", "error", "rt", "block", "trial", "part", "error_rate"))
+  correct <- select(subset(data, error == 0), c("sid", "prime_cat", "target_cat", "error", "rt", "block", "error_rate"))
   correct <- correct %>% mutate(rt = ifelse(1000 < rt, 1000, rt)) # 1000<rt >> change rt to 1000
   
   final_data <- remove_participants(add_penalty(correct, errors))
   
   score <- calc_g_parts(final_data)
-
+  
   return(score)
 }
 
@@ -437,25 +461,33 @@ calc_algo_9 <- function(data, outcome){
 
 #' EPT's G score calculation
 #'
-#' Calculate scores according to the users' choice of algorithm, with algorithm 1 as default
+#' Calculate EPT scores using one of the 9 algorithms recommended in Segal-Gordon et al. (2024).
+#' Segal-Gordon et al. recommended Algorithms 1 and 7. Algorithm 1 is set as default.
+#' 
 #'
 #' @param algoNum The chosen algorithm, with default value of 1.
+#' @param blockNum The number of blocks, with default value of max(data$block).
 #' @param data The processed data, with columns:
-#' sid (subjects' unique id), 
-#' error (1 is wrong, 0 is right), 
-#' rt (reaction time), 
-#' prime_cat (primes' categories), 
-#' target_cat (pos / neg), 
-#' block = part (EPT with 3 parts), 
-#' trial - trial number.
-#' The order should be: sid, error, rt, prime_cat, target_cat, block, trial, part.
-#' @return Data frame of scores by subject (sid)
+#' \itemize{
+#'   \item \code{sid} (Participant's unique ID)
+#'   \item \code{error} (Indicator - 1 is error, 0 is correct)
+#'   \item \code{rt} (Reaction time)
+#'   \item \code{prime_cat} (The primes category)
+#'   \item \code{target_cat} (pos / neg)
+#'   \item \code{block - optional} (Block number. If column is missing, it is calculated automatically by the "blockNum" argument.)
+#' }
+#' @return The results include EPT scores for each prime_cat, for each sid, overall and by block (for computing internal consistency).
+#' 
 #' @examples 
 #' scores1 <- calc_ept_score(myProcessedData);
-#' scores2 <- calc_ept_score(myProcessedData, 7);
+#' scores2 <- calc_ept_score(myProcessedData, algoNum = 7);
+#' scores3 <- calc_ept_score(myProcessedDataWithoutBlockCol, blockNum = 5, algoNum = 3);
 #' @export
-calc_ept_score <- function(data, algoNum = 1) {
-  data <- data %>% dplyr::select(c("sid", "error", "rt", "prime_cat", "target_cat", "block", "trial", "part"))
+#' 
+
+calc_ept_score <- function(data, blockNum = max(data$block), algoNum = 1) {
+  print(blockNum)
+  data <- check_shape(data, blockNum)
   scores <- switch(as.character(algoNum),
                    "1" = calc_algo_1(data),
                    "2" = calc_algo_2(data),
@@ -467,8 +499,9 @@ calc_ept_score <- function(data, algoNum = 1) {
                    "8" = calc_algo_8(data),
                    "9" = calc_algo_9(data),
                    "Unsupported algorithm number")
-  
   return(scores)
 }
+
+
 
 

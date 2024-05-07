@@ -4,28 +4,32 @@
 \alias{calc_ept_score}
 \title{EPT's G score calculation}
 \usage{
-calc_ept_score(data, algoNum = 1)
+calc_ept_score(data, blockNum = max(data$block), algoNum = 1)
 }
 \arguments{
 \item{data}{The processed data, with columns:
-sid (subjects' unique id), 
-error (1 is wrong, 0 is right), 
-rt (reaction time), 
-prime_cat (primes' categories), 
-target_cat (pos / neg), 
-block = part (EPT with 3 parts), 
-trial - trial number.
-The order should be: sid, error, rt, prime_cat, target_cat, block, trial, part.}
+\itemize{
+  \item \code{sid} (Participant's unique ID)
+  \item \code{error} (Indicator - 1 is error, 0 is correct)
+  \item \code{rt} (Reaction time)
+  \item \code{prime_cat} (The primes category)
+  \item \code{target_cat} (pos / neg)
+  \item \code{block - optional} (Block number. If column is missing, it is calculated automatically by the "blockNum" argument.)
+}}
+
+\item{blockNum}{The number of blocks, with default value of max(data$block).}
 
 \item{algoNum}{The chosen algorithm, with default value of 1.}
 }
 \value{
-Data frame of scores by subject (sid)
+The results include EPT scores for each prime_cat, for each sid, overall and by block (for computing internal consistency).
 }
 \description{
-Calculate scores according to the users' choice of algorithm, with algorithm 1 as default
+Calculate EPT scores using one of the 9 algorithms recommended in Segal-Gordon et al. (2024).
+Segal-Gordon et al. recommended Algorithms 1 and 7. Algorithm 1 is set as default.
 }
 \examples{
 scores1 <- calc_ept_score(myProcessedData);
-scores2 <- calc_ept_score(myProcessedData, 7);
+scores2 <- calc_ept_score(myProcessedData, algoNum = 7);
+scores3 <- calc_ept_score(myProcessedDataWithoutBlockCol, blockNum = 5, algoNum = 3);
 }
