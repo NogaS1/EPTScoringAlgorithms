@@ -28,7 +28,9 @@ In R studio enviorment:
 
 ```R
 library(devtools)   # Make sure that the devtools library is loaded
-install_github("NogaS1/EPTScoringAlgorithms");
+remotes::install_github("NogaS1/EPTScoringAlgorithms”)
+library(EPTScoringAlgorithms)
+?calc_ept_score     # For "help"
 ```
 ### Prepare the Data
 Afterwards, pre process the data to fit this shape:
