@@ -2,7 +2,7 @@
 
 ## EPT's Score Calculation
 
-Calculate EPT scores using one of the 9 algorithms recommended in MASKED. MASKED recommended Algorithms 1 and 7. Algorithm 1 is set as default.
+Calculate EPT scores using one of the 9 algorithms recommended in Segal-Gordon et al. (in press). Segal-Gordon et al. (in press) recommended Algorithms 1 and 7. Algorithm 1 is set as default.
 
 ## Algorithm Details
 
