@@ -213,7 +213,7 @@ calc_algo_1 <- function(data){
   
   # Iterate over each block and merge scores by 'sid'
   for (i in 1:max_block) {
-    block_scores <- calc_g_overall(data[final_data$block == i, ])
+    block_scores <- calc_g_overall(final_data[final_data$block == i, ])
     colnames(block_scores)[-1] <- paste0(names(block_scores)[-1], "_", i)  # Exclude the first column (sid)
     all_block_scores <- merge(all_block_scores, block_scores, by = "sid", all.x = TRUE)
   }
