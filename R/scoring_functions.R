@@ -186,10 +186,9 @@ calc_g_parts <- function(data){
 # Algo 1 - e0.5_lowNone_2SD_noWinsorize_600msPenaltyErrors_noLog_g_overall
 calc_algo_1 <- function(data){
   
-  # add error rate to fit other functions
   data <- as.data.frame(data %>% dplyr::group_by(sid) %>% dplyr::mutate(error_rate = mean(error, na.rm = TRUE)))
   data <- subset(data, error_rate <= 0.5)
-  
+
   # Keep errors aside
   errors <- subset(data, error == 1)
   
@@ -208,20 +207,16 @@ calc_algo_1 <- function(data){
   
   # Add the blocks' scores
   max_block <- max(final_data$block)  # Get the maximum block number
-
-  # Calculate scores for each block
-  for (i in 1:max_block) {
-    scores <- calc_g_overall(final_data[final_data$block == i, ])
-    score_list[[i]] <- scores
-  }
   
   # Initialize an empty data frame to store the blocks' scores
   all_block_scores <- data.frame(sid = unique(final_data$sid))
   
   # Iterate over each block and merge scores by 'sid'
   for (i in 1:max_block) {
-    block_scores <- score_list[[i]]
+    block_scores <- calc_g_overall(final_data[final_data$block == i, ])
+    # print(head(final_data[final_data$block == i, ], 30))  # REMOVE
     colnames(block_scores)[-1] <- paste0(names(block_scores)[-1], "_", i)  # Exclude the first column (sid)
+    print(block_scores[block_scores$sid == 814558,])
     all_block_scores <- merge(all_block_scores, block_scores, by = "sid", all.x = TRUE)
   }
   
