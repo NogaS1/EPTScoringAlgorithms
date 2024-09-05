@@ -188,7 +188,7 @@ calc_algo_1 <- function(data){
   
   data <- as.data.frame(data %>% dplyr::group_by(sid) %>% dplyr::mutate(error_rate = mean(error, na.rm = TRUE)))
   data <- subset(data, error_rate <= 0.5)
-
+  
   # Keep errors aside
   errors <- subset(data, error == 1)
   
