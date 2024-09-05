@@ -207,17 +207,6 @@ calc_algo_1 <- function(data){
   
   # Add the blocks' scores
   max_block <- max(final_data$block)  # Get the maximum block number
-
-
-  # Initialize an empty list to store scores for each block
-  score_list <- list()
-  # Calculate scores for each block
-  for (i in 1:max_block) {
-    scores <- calc_g_overall(data[data$block == i, ])
-    score_list[[i]] <- scores
-  }
-
-  
   
   # Initialize an empty data frame to store the blocks' scores
   all_block_scores <- data.frame(sid = unique(final_data$sid))
@@ -227,13 +216,13 @@ calc_algo_1 <- function(data){
     block_scores <- calc_g_overall(final_data[final_data$block == i, ])
     # print(head(final_data[final_data$block == i, ], 30))  # REMOVE
     colnames(block_scores)[-1] <- paste0(names(block_scores)[-1], "_", i)  # Exclude the first column (sid)
-    print(block_scores[block_scores$sid == 814558,])
+    # print(block_scores[block_scores$sid == 814558,])
     all_block_scores <- merge(all_block_scores, block_scores, by = "sid", all.x = TRUE)
   }
   
   score <- merge(score, all_block_scores, by = "sid", all.x = TRUE)
   
-  return(score_list)
+  return(score)
 }
 
 # Algo 2 - e0.4_300_2SD_noWinsorize_600msPenaltyErrors_noLog_g_parts
