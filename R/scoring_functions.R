@@ -211,7 +211,7 @@ calc_algo_1 <- function(data){
 
   # Calculate scores for each block
   for (i in 1:max_block) {
-    scores <- calc_g_overall(data[data$block == i, ])
+    scores <- calc_g_overall(final_data[final_data$block == i, ])
     score_list[[i]] <- scores
   }
   
