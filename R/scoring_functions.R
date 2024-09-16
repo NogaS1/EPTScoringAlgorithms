@@ -29,6 +29,7 @@ add_penalty <- function(correct, errors){
   errors_penalty <- dplyr::select(errors_penalty, -"mean_rt")
   
   correct <- dplyr::select(correct, c("sid", "prime_cat", "target_cat", "error", "rt", "block", "error_rate"))
+  errors_penalty <- dplyr::select(errors_penalty, c("sid", "prime_cat", "target_cat", "error", "rt", "block", "error_rate"))
   res <- rbind(correct, errors_penalty)          # Add error trials (after penalty) to correct trials trimmed df
   
   return(res)
@@ -36,6 +37,7 @@ add_penalty <- function(correct, errors){
 
 # remove problematic participants
 remove_participants <- function(data){
+  
   # Remove participants with less than 2 correct trials per prime-target condition
   correct_trials <- subset(data, error == 0) %>% dplyr::group_by(sid, prime_cat, target_cat)
   no_correct_trials <- unique(as.matrix(data[,1]))[!unique(as.matrix(data[,1])) %in% unique(as.matrix(correct_trials[,1]))]           # remove participants who has only error trials after treatments
@@ -49,6 +51,12 @@ remove_participants <- function(data){
   missing <- c %>% dplyr::group_by(sid, prime_cat) %>% dplyr::mutate(has_neg = any(target_cat == "neg"), has_pos = any(target_cat == "pos")) %>% dplyr::filter(!(has_neg & has_pos))
   not_ok_sid <- append(missing$sid, not_ok_sid)
   data <- data[!data$sid %in% not_ok_sid,]
+  
+  if(length(not_ok_sid) != 0){
+    excluded <- data.frame(sid = not_ok_sid, exclude = 1, exclusion_reason = "not enough trials", stringsAsFactors = FALSE)
+  }else{
+    excluded <- data.frame(sid = numeric(), exclude = numeric(), exclusion_reason = character(), stringsAsFactors = FALSE)
+  }
   
   # missing blocks
   max_block <- max(data$block)
@@ -68,10 +76,14 @@ remove_participants <- function(data){
   
   all_missing_parts <- unique(unlist(unlist(missing_parts)))
   
+  if(length(all_missing_parts) != 0){
+    excluded <- rbind(excluded, data.frame(sid = all_missing_parts, exclude = 1, exclusion_reason = "missing blocks", stringsAsFactors = FALSE))
+  }
+  
   # Remove missing
   data <- data[!data$sid %in% all_missing_parts, ]
   
-  return(data)
+  return(list(data,excluded))
 }
 
 # Calculate basic G score
@@ -140,6 +152,55 @@ calc_g_overall <- function(data){
   # Calc G score & fix col names
   overall <- my.Gscores(inID = data$sid, inDV = data$rt, inPair = data$prime_cat, inCond = data$cond, include = data$include)
   
+  tmp <- data.frame(sessionId=data$sid, dv=data$rt, pair=data$prime_cat, cond=data$cond, include=data$include)
+  # Comments in "quotes" from Nosek, Bar-Anan, Sriram, Greenwald (2013),
+  # "Understanding and using the brief implicit association test: I.
+  # recommended scoring procedures". Table 9. http://ssrn.com/abstract=2196002
+  
+  Gaussianranks <- function(x){
+    # It handles NA values by leaving them in the same place as found
+    y <- x[!is.na(x)]    
+    
+    # "1. Assign fractional ranks to N latencies. The longest latency will be
+    # assigned a value of 1.0 and the shortest will be assigned a value of 1/N.
+    # In the case of ties, ranks are averaged across tied values"
+    N <- length(y)
+    Fr <- rank(y)/N
+    
+    # "2. Subtract 1/2N from each fractional rank. Assuming untied values, the
+    # largest latency will now have a value of 1-1/2N or (2N-1)/2N.
+    # The 1/2N downward adjustment applies generally, even when tied values
+    # exist".
+    Fr <- Fr - 1/(2*N)
+    
+    # "3. For each of the N observations, compute the standard normal deviate
+    # (mean = 0 and standard deviation = 1) corresponding to the adjusted
+    # fractinal rank latency".
+    Gr <- scale(Fr)
+    
+    # Remove the attributes given by the scale() function
+    attr(Gr, "scaled:center") <- NULL
+    attr(Gr, "scaled:scale") <- NULL
+    x[!is.na(x)] <- Gr
+    return(x)
+  }
+  
+  # "4. G1 is the mean of the normal deviates in condition 1. G2 is the mean
+  # of the normal deviates in condition 2"
+  Mranks <- tmp %>% 
+    dplyr::group_by(sessionId) %>% # here do NOT group by blockcode
+    dplyr::mutate(Gr = Gaussianranks(dv)) %>% # compute gaussian ranks
+    dplyr::group_by(sessionId, pair, cond) %>% # here do group by blockcode
+    dplyr::summarize(Mean = mean(Gr, na.rm = TRUE)) # mean rank in each block
+  
+  Mranks <- reshape2::dcast(Mranks, sessionId + pair ~ cond, value.var = "Mean")
+  
+  # "5. G = G2-G1"
+  Mranks <- Mranks %>% dplyr::mutate(Gscore = incong - cong)
+  
+  # Put data in wide format
+  overall <- reshape2::dcast(Mranks, sessionId ~ pair, value.var = "Gscore")
+  
   # change col names
   colnames(overall)[1] <- "sid"
   names(overall)[names(overall) != "sid"] <- paste0("g_", names(overall)[names(overall) != "sid"])
@@ -186,8 +247,18 @@ calc_g_parts <- function(data){
 # Algo 1 - e0.5_lowNone_2SD_noWinsorize_600msPenaltyErrors_noLog_g_overall
 calc_algo_1 <- function(data){
   
+  all_sid <- unique(data$sid)
+  
+  # add error rate to fit other functions
   data <- as.data.frame(data %>% dplyr::group_by(sid) %>% dplyr::mutate(error_rate = mean(error, na.rm = TRUE)))
   data <- subset(data, error_rate <= 0.5)
+  
+  if(length(all_sid[!all_sid %in% data$sid]) != 0){
+    excluded <- data.frame(sid = all_sid[!all_sid %in% data$sid], exclude = 1, exclusion_reason = "high error rate", stringsAsFactors = FALSE)
+  }else{
+    excluded <- data.frame(sid = numeric(), exclude = numeric(), exclusion_reason = character(), stringsAsFactors = FALSE)
+  }
+  
   
   # Keep errors aside
   errors <- subset(data, error == 1)
@@ -201,36 +272,54 @@ calc_algo_1 <- function(data){
   correct <- dplyr::select(merge(x = correct, y = sd, by = c("sid", "prime_cat", "target_cat"), all.x = TRUE), -c(".group"))
   correct <- subset(correct, rt <= correct$high)
   
-  final_data <- remove_participants(add_penalty(correct, errors))
+  all <- remove_participants(add_penalty(correct, errors))
+  
+  final_data <- all[[1]]
+  excluded <- rbind(excluded, all[[2]])
   
   score <- calc_g_overall(final_data)
   
   # Add the blocks' scores
   max_block <- max(final_data$block)  # Get the maximum block number
-  
   # Initialize an empty data frame to store the blocks' scores
   all_block_scores <- data.frame(sid = unique(final_data$sid))
   
   # Iterate over each block and merge scores by 'sid'
   for (i in 1:max_block) {
     block_scores <- calc_g_overall(final_data[final_data$block == i, ])
-    # print(head(final_data[final_data$block == i, ], 30))  # REMOVE
     colnames(block_scores)[-1] <- paste0(names(block_scores)[-1], "_", i)  # Exclude the first column (sid)
-    # print(block_scores[block_scores$sid == 814558,])
     all_block_scores <- merge(all_block_scores, block_scores, by = "sid", all.x = TRUE)
   }
   
   score <- merge(score, all_block_scores, by = "sid", all.x = TRUE)
+  score$exclude <- 0
+  score$exclusion_reason <- NA
+  
+  if(nrow(excluded) != 0){
+    missing_cols <- setdiff(names(score), names(excluded))
+    excluded[missing_cols] <- NA     # Add the missing scores cols
+  
+    score <- rbind(score, excluded)
+  }
   
   return(score)
 }
 
 # Algo 2 - e0.4_300_2SD_noWinsorize_600msPenaltyErrors_noLog_g_parts
 calc_algo_2 <- function(data){
+  
+  all_sid <- unique(data$sid)
+  
   # add error rate to fit other functions
   data <- as.data.frame(data %>% dplyr::group_by(sid) %>% dplyr::mutate(error_rate = mean(error, na.rm = TRUE)))
   data <- subset(data, error_rate <= 0.4)
   
+  if(length(all_sid[!all_sid %in% data$sid]) != 0){
+    excluded <- data.frame(sid = all_sid[!all_sid %in% data$sid], exclude = 1, exclusion_reason = "high error rate", stringsAsFactors = FALSE)
+  }else{
+    excluded <- data.frame(sid = numeric(), exclude = numeric(), exclusion_reason = character(), stringsAsFactors = FALSE)
+  }
+
   # Keep errors aside
   errors <- subset(data, error == 1)
   
@@ -244,18 +333,40 @@ calc_algo_2 <- function(data){
   correct <- select(merge(x = correct, y = sd, by = c("sid", "prime_cat", "target_cat"), all.x = TRUE), -c(".group"))
   correct <- subset(correct, rt <= correct$high)
   
-  final_data <- remove_participants(add_penalty(correct, errors))
+  all <- remove_participants(add_penalty(correct, errors))
+  
+  final_data <- all[[1]]
+  excluded <- rbind(excluded, all[[2]])
   
   score <- calc_g_parts(final_data)
+  
+  score$exclude <- 0
+  score$exclusion_reason <- NA
+  
+  if(nrow(excluded) != 0){
+    missing_cols <- setdiff(names(score), names(excluded))
+    excluded[missing_cols] <- NA     # Add the missing scores cols
+    
+    score <- rbind(score, excluded)
+  }
   
   return(score)
 }
 
 # Algo 3 - e0.5_300_1000_winsorize_600msPenaltyErrors_noLog_g_parts
 calc_algo_3 <- function(data){
+  
+  all_sid <- unique(data$sid)
+  
   # remove participant with error rate higher than 0.5
   data <- as.data.frame(data %>% dplyr::group_by(sid) %>% dplyr::mutate(error_rate = mean(error, na.rm = TRUE)))
   data <- subset(data, error_rate <= 0.5)
+  
+  if(length(all_sid[!all_sid %in% data$sid]) != 0){
+    excluded <- data.frame(sid = all_sid[!all_sid %in% data$sid], exclude = 1, exclusion_reason = "high error rate", stringsAsFactors = FALSE)
+  }else{
+    excluded <- data.frame(sid = numeric(), exclude = numeric(), exclusion_reason = character(), stringsAsFactors = FALSE)
+  }
   
   # Keep errors aside
   errors <- subset(data, error == 1)
@@ -265,9 +376,22 @@ calc_algo_3 <- function(data){
   correct <- correct %>% mutate(rt = ifelse(1000 < rt, 1000, rt)) # 1000<rt >> change rt to 1000
   correct <- correct %>% mutate(rt = ifelse(rt < 300, 300, rt))   # rt<300 >> change rt to 300
   
-  final_data <- remove_participants(add_penalty(correct, errors))
+  all <- remove_participants(add_penalty(correct, errors))
+  
+  final_data <- all[[1]]
+  excluded <- rbind(excluded, all[[2]])
   
   score <- calc_g_parts(final_data)
+  
+  score$exclude <- 0
+  score$exclusion_reason <- NA
+  
+  if(nrow(excluded) != 0){
+    missing_cols <- setdiff(names(score), names(excluded))
+    excluded[missing_cols] <- NA     # Add the missing scores cols
+    
+    score <- rbind(score, excluded)
+  }
   
   return(score)
 }
@@ -275,9 +399,17 @@ calc_algo_3 <- function(data){
 # Algo 4 - e0.4_lowNone_1000_winsorize_600msPenaltyErrors_noLog_g_parts
 calc_algo_4 <- function(data){
   
+  all_sid <- unique(data$sid)
+  
   # remove participant with error rate higher than 0.4
   data <- as.data.frame(data %>% dplyr::group_by(sid) %>% dplyr::mutate(error_rate = mean(error, na.rm = TRUE)))
   data <- subset(data, error_rate <= 0.4)
+  
+  if(length(all_sid[!all_sid %in% data$sid]) != 0){
+    excluded <- data.frame(sid = all_sid[!all_sid %in% data$sid], exclude = 1, exclusion_reason = "high error rate", stringsAsFactors = FALSE)
+  }else{
+    excluded <- data.frame(sid = numeric(), exclude = numeric(), exclusion_reason = character(), stringsAsFactors = FALSE)
+  }
   
   # Keep errors aside
   errors <- subset(data, error == 1)
@@ -286,9 +418,22 @@ calc_algo_4 <- function(data){
   correct <- select(subset(data, error == 0), c("sid", "prime_cat", "target_cat", "error", "rt", "block", "error_rate"))
   correct <- correct %>% mutate(rt = ifelse(1000 < rt, 1000, rt)) # 1000<rt >> change rt to 1000
   
-  final_data <- remove_participants(add_penalty(correct, errors))
+  all <- remove_participants(add_penalty(correct, errors))
+  
+  final_data <- all[[1]]
+  excluded <- rbind(excluded, all[[2]])
   
   score <- calc_g_parts(final_data)
+  
+  score$exclude <- 0
+  score$exclusion_reason <- NA
+  
+  if(nrow(excluded) != 0){
+    missing_cols <- setdiff(names(score), names(excluded))
+    excluded[missing_cols] <- NA     # Add the missing scores cols
+    
+    score <- rbind(score, excluded)
+  }
   
   return(score)
 }
@@ -296,9 +441,17 @@ calc_algo_4 <- function(data){
 # Algo 5 - e0.4_300_1000_winsorize_600msPenaltyErrors_noLog_g_parts
 calc_algo_5 <- function(data){
   
+  all_sid <- unique(data$sid)
+  
   # remove participant with error rate higher than 0.4
   data <- as.data.frame(data %>% dplyr::group_by(sid) %>% dplyr::mutate(error_rate = mean(error, na.rm = TRUE)))
   data <- subset(data, error_rate <= 0.4)
+  
+  if(length(all_sid[!all_sid %in% data$sid]) != 0){
+    excluded <- data.frame(sid = all_sid[!all_sid %in% data$sid], exclude = 1, exclusion_reason = "high error rate", stringsAsFactors = FALSE)
+  }else{
+    excluded <- data.frame(sid = numeric(), exclude = numeric(), exclusion_reason = character(), stringsAsFactors = FALSE)
+  }
   
   # Keep errors aside
   errors <- subset(data, error == 1)
@@ -308,9 +461,22 @@ calc_algo_5 <- function(data){
   correct <- correct %>% mutate(rt = ifelse(1000 < rt, 1000, rt)) # 1000<rt >> change rt to 1000
   correct <- correct %>% mutate(rt = ifelse(rt < 300, 300, rt))   # rt<300 >> change rt to 300
   
-  final_data <- remove_participants(add_penalty(correct, errors))
+  all <- remove_participants(add_penalty(correct, errors))
+  
+  final_data <- all[[1]]
+  excluded <- rbind(excluded, all[[2]])
   
   score <- calc_g_parts(final_data)
+  
+  score$exclude <- 0
+  score$exclusion_reason <- NA
+  
+  if(nrow(excluded) != 0){
+    missing_cols <- setdiff(names(score), names(excluded))
+    excluded[missing_cols] <- NA     # Add the missing scores cols
+    
+    score <- rbind(score, excluded)
+  }
   
   return(score)
 }
@@ -318,9 +484,17 @@ calc_algo_5 <- function(data){
 # Algo 6 - e0.5_lowNone_2SD_noWinsorize_600msPenaltyErrors_noLog_g_parts
 calc_algo_6 <- function(data){
   
+  all_sid <- unique(data$sid)
+  
   # add error rate to fit other functions
   data <- as.data.frame(data %>% dplyr::group_by(sid) %>% dplyr::mutate(error_rate = mean(error, na.rm = TRUE)))
   data <- subset(data, error_rate <= 0.5)
+  
+  if(length(all_sid[!all_sid %in% data$sid]) != 0){
+    excluded <- data.frame(sid = all_sid[!all_sid %in% data$sid], exclude = 1, exclusion_reason = "high error rate", stringsAsFactors = FALSE)
+  }else{
+    excluded <- data.frame(sid = numeric(), exclude = numeric(), exclusion_reason = character(), stringsAsFactors = FALSE)
+  }
   
   # Keep errors aside
   errors <- subset(data, error == 1)
@@ -335,9 +509,22 @@ calc_algo_6 <- function(data){
   correct <- select(merge(x = correct, y = sd, by = c("sid", "prime_cat", "target_cat"), all.x = TRUE), -c(".group"))
   correct <- subset(correct, rt <= correct$high)
   
-  final_data <- remove_participants(add_penalty(correct, errors))
+  all <- remove_participants(add_penalty(correct, errors))
+  
+  final_data <- all[[1]]
+  excluded <- rbind(excluded, all[[2]])
   
   score <- calc_g_parts(final_data)
+  
+  score$exclude <- 0
+  score$exclusion_reason <- NA
+  
+  if(nrow(excluded) != 0){
+    missing_cols <- setdiff(names(score), names(excluded))
+    excluded[missing_cols] <- NA     # Add the missing scores cols
+    
+    score <- rbind(score, excluded)
+  }
   
   return(score)
 }
@@ -345,9 +532,17 @@ calc_algo_6 <- function(data){
 # Algo 7 - e0.5_300_2SD_noWinsorize_600msPenaltyErrors_noLog_g_parts
 calc_algo_7 <- function(data){
   
+  all_sid <- unique(data$sid)
+  
   # add error rate to fit other functions
   data <- as.data.frame(data %>% dplyr::group_by(sid) %>% dplyr::mutate(error_rate = mean(error, na.rm = TRUE)))
   data <- subset(data, error_rate <= 0.5)
+  
+  if(length(all_sid[!all_sid %in% data$sid]) != 0){
+    excluded <- data.frame(sid = all_sid[!all_sid %in% data$sid], exclude = 1, exclusion_reason = "high error rate", stringsAsFactors = FALSE)
+  }else{
+    excluded <- data.frame(sid = numeric(), exclude = numeric(), exclusion_reason = character(), stringsAsFactors = FALSE)
+  }
   
   # Keep errors aside
   errors <- subset(data, error == 1)
@@ -362,18 +557,40 @@ calc_algo_7 <- function(data){
   correct <- select(merge(x = correct, y = sd, by = c("sid", "prime_cat", "target_cat"), all.x = TRUE), -c(".group"))
   correct <- subset(correct, rt <= correct$high)
   
-  final_data <- remove_participants(add_penalty(correct, errors))
+  all <- remove_participants(add_penalty(correct, errors))
+  
+  final_data <- all[[1]]
+  excluded <- rbind(excluded, all[[2]])
   
   score <- calc_g_parts(final_data)
+  
+  score$exclude <- 0
+  score$exclusion_reason <- NA
+  
+  if(nrow(excluded) != 0){
+    missing_cols <- setdiff(names(score), names(excluded))
+    excluded[missing_cols] <- NA     # Add the missing scores cols
+    
+    score <- rbind(score, excluded)
+  }
   
   return(score)
 }
 
 # Algo 8 - best treatments no winsorize - e0.4_lowNone_1000_noWinsorize_600msPenaltyErrors_noLog_g_parts
 calc_algo_8 <- function(data){
+  
+  all_sid <- unique(data$sid)
+  
   # add error rate to fit other functions
   data <- as.data.frame(data %>% dplyr::group_by(sid) %>% dplyr::mutate(error_rate = mean(error, na.rm = TRUE)))
   data <- subset(data, error_rate <= 0.4)
+  
+  if(length(all_sid[!all_sid %in% data$sid]) != 0){
+    excluded <- data.frame(sid = all_sid[!all_sid %in% data$sid], exclude = 1, exclusion_reason = "high error rate", stringsAsFactors = FALSE)
+  }else{
+    excluded <- data.frame(sid = numeric(), exclude = numeric(), exclusion_reason = character(), stringsAsFactors = FALSE)
+  }
   
   # Keep errors aside
   errors <- subset(data, error == 1)
@@ -382,18 +599,40 @@ calc_algo_8 <- function(data){
   correct <- select(subset(data, error == 0), c("sid", "prime_cat", "target_cat", "error", "rt", "block", "error_rate"))
   correct <- subset(correct, rt <= 1000)
   
-  final_data <- remove_participants(add_penalty(correct, errors))
+  all <- remove_participants(add_penalty(correct, errors))
+  
+  final_data <- all[[1]]
+  excluded <- rbind(excluded, all[[2]])
   
   score <- calc_g_parts(final_data)
+  
+  score$exclude <- 0
+  score$exclusion_reason <- NA
+  
+  if(nrow(excluded) != 0){
+    missing_cols <- setdiff(names(score), names(excluded))
+    excluded[missing_cols] <- NA     # Add the missing scores cols
+    
+    score <- rbind(score, excluded)
+  }
   
   return(score)
 }
 
 # Algo 9 - best tratments with winsorize - e0.4_lowNone_1000_winsorize_600msPenaltyErrors_noLog_g_parts
 calc_algo_9 <- function(data){
+  
+  all_sid <- unique(data$sid)
+  
   # add error rate to fit other functions
   data <- as.data.frame(data %>% dplyr::group_by(sid) %>% dplyr::mutate(error_rate = mean(error, na.rm = TRUE)))
   data <- subset(data, error_rate <= 0.4)
+  
+  if(length(all_sid[!all_sid %in% data$sid]) != 0){
+    excluded <- data.frame(sid = all_sid[!all_sid %in% data$sid], exclude = 1, exclusion_reason = "high error rate", stringsAsFactors = FALSE)
+  }else{
+    excluded <- data.frame(sid = numeric(), exclude = numeric(), exclusion_reason = character(), stringsAsFactors = FALSE)
+  }
   
   # Keep errors aside
   errors <- subset(data, error == 1)
@@ -402,9 +641,22 @@ calc_algo_9 <- function(data){
   correct <- select(subset(data, error == 0), c("sid", "prime_cat", "target_cat", "error", "rt", "block", "error_rate"))
   correct <- correct %>% mutate(rt = ifelse(1000 < rt, 1000, rt)) # 1000<rt >> change rt to 1000
   
-  final_data <- remove_participants(add_penalty(correct, errors))
+  all <- remove_participants(add_penalty(correct, errors))
+  
+  final_data <- all[[1]]
+  excluded <- rbind(excluded, all[[2]])
   
   score <- calc_g_parts(final_data)
+  
+  score$exclude <- 0
+  score$exclusion_reason <- NA
+  
+  if(nrow(excluded) != 0){
+    missing_cols <- setdiff(names(score), names(excluded))
+    excluded[missing_cols] <- NA     # Add the missing scores cols
+    
+    score <- rbind(score, excluded)
+  }
   
   return(score)
 }
@@ -454,7 +706,3 @@ calc_ept_score <- function(data, blockNum = max(data$block), algoNum = 1) {
                    "Unsupported algorithm number")
   return(scores)
 }
-
-
-
-
