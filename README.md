@@ -6,7 +6,7 @@ Calculate EPT scores using one of the 9 algorithms recommended in Segal-Gordon e
 
 ## Algorithm Details
 
-The table below summarizes the details of the nine algorithms recommended in MASKED:
+The table below summarizes the details of the nine algorithms recommended in Segal-Gordon et al. (2024):
 
 | Algorithm | Max_error | Min_ms | Max_ms | Winsorize | Error_treatment | Log_transformation | Score_computation | Parcel_based |
 |-----------|-----------|--------|--------|-----------|-----------------|---------------------|-------------------|--------------|
