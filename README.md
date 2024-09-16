@@ -59,5 +59,5 @@ scores3 <- calc_ept_score(myProcessedDataWithoutBlockCol, blockNum = 5, algoNum 
 The results include EPT scores for each prime_cat, for each sid, overall and by block (for computing internal consistency).
 If an sid was excluded, the reason is described in the followong columns:
 
-- 'exclude': 0 if false (not excluded, has an EPT score), 1 if true (excluded).
+- 'excluded': 0 if false (not excluded, has an EPT score), 1 if true (excluded).
 - 'exclusion_reason': the reason the sid was excluded (char).
