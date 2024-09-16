@@ -2,7 +2,7 @@
 
 ## EPT's Score Calculation
 
-Calculate EPT scores using one of the 9 algorithms recommended in Segal-Gordon et al. (in press). Segal-Gordon et al. (in press) recommended Algorithms 1 and 7. Algorithm 1 is set as default.
+Calculate EPT scores using one of the 9 algorithms recommended in Segal-Gordon et al. (2024). Segal-Gordon et al. (2024) recommended Algorithms 1 and 7. Algorithm 1 is set as default.
 
 ## Algorithm Details
 
@@ -57,3 +57,7 @@ scores3 <- calc_ept_score(myProcessedDataWithoutBlockCol, blockNum = 5, algoNum 
 ### Results
 
 The results include EPT scores for each prime_cat, for each sid, overall and by block (for computing internal consistency).
+If an sid was excluded, the reason is described in the followong columns:
+
+- 'exclude': 0 if false (not excluded, has an EPT score), 1 if true (excluded).
+- 'exclusion_reason': the reason the sid was excluded (char).
