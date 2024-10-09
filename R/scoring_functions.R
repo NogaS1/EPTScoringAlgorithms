@@ -691,7 +691,6 @@ calc_algo_9 <- function(data){
 #' 
 
 calc_ept_score <- function(data, blockNum = max(data$block), algoNum = 1) {
-  print(blockNum)
   data <- check_shape(data, blockNum)
   scores <- switch(as.character(algoNum),
                    "1" = calc_algo_1(data),
